@@ -3474,6 +3474,13 @@ public final class Settings {
         public static final String KEY_APP_SWITCH_LONG_PRESS_ACTION = "key_app_switch_long_press_action";
 
         /**
+         * Whether to wake the screen with the home key, the value is boolean.
+         * @hide
+         */
+        public static final String HOME_WAKE_SCREEN = "home_wake_screen";
+
+        /**
+         * Color temperature of the display during the day
          * @hide
          */
         public static final String POWER_PROFILE_ENABLED = "power_profile_enabled";
