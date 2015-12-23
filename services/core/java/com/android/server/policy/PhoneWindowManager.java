@@ -5374,12 +5374,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 }
                 break;
 
-            case KeyEvent.KEYCODE_HOME:
-                if (down && !interactive && mHomeWakeScreen) {
-                    isWakeKey = true;
-                }
-                break;
-
             case KeyEvent.KEYCODE_ENDCALL: {
                 result &= ~ACTION_PASS_TO_USER;
                 if (down) {
@@ -5513,7 +5507,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             }
             // WTH are those wake keys?
             case KeyEvent.KEYCODE_BACK:
-            case KeyEvent.KEYCODE_HOME:
             case KeyEvent.KEYCODE_MENU: {
                 if (disableKey) {
                     result &= ~ACTION_PASS_TO_USER;
