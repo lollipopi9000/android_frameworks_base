@@ -153,6 +153,7 @@ import static android.view.WindowManagerPolicy.WindowManagerFuncs.LID_CLOSED;
 import static android.view.WindowManagerPolicy.WindowManagerFuncs.CAMERA_LENS_COVER_ABSENT;
 import static android.view.WindowManagerPolicy.WindowManagerFuncs.CAMERA_LENS_UNCOVERED;
 import static android.view.WindowManagerPolicy.WindowManagerFuncs.CAMERA_LENS_COVERED;
+import static org.cyanogenmod.platform.internal.Manifest.permission.THIRD_PARTY_KEYGUARD;
 
 /**
  * WindowManagerPolicy implementation for the Android phone UI.  This
@@ -273,6 +274,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // The panic gesture may become active only after the keyguard is dismissed and the immersive
     // app shows again. If that doesn't happen for 30s we drop the gesture.
     private static final long PANIC_GESTURE_EXPIRATION = 30000;
+
+    private static final String DEPRECATED_THIRD_PARTY_KEYGUARD_PERMISSION =
+            "android.permission.THIRD_PARTY_KEYGUARD";
 
     /**
      * Keyguard stuff
@@ -894,8 +898,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             resolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.ACCELEROMETER_ROTATION_ANGLES), false, this,
                     UserHandle.USER_ALL);
-            resolver.registerContentObserver(CMSettings.Secure.getUriFor(
-                    CMSettings.Secure.DEV_FORCE_SHOW_NAVBAR), false, this,
+            resolver.registerContentObserver(CMSettings.Global.getUriFor(
+                    CMSettings.Global.DEV_FORCE_SHOW_NAVBAR), false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(CMSettings.System.getUriFor(
                     CMSettings.System.VOLBTN_MUSIC_CONTROLS), false, this,
@@ -1760,10 +1764,15 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                                 mNavigationBarLeftInLandscape) {
                             requestTransientBars(mNavigationBar);
                         }
-                        if (mShowKeyguardOnLeftSwipe && isKeyguardShowingOrOccluded()) {
+                        boolean focusedWindowIsExternalKeyguard = false;
+                        if (mFocusedWindow != null) {
+                            focusedWindowIsExternalKeyguard = (mFocusedWindow.getAttrs().type
+                                    & WindowManager.LayoutParams.TYPE_KEYGUARD_PANEL) != 0;
+                        }
+                        if (mShowKeyguardOnLeftSwipe && isKeyguardShowingOrOccluded()
+                                && focusedWindowIsExternalKeyguard) {
                             // Show keyguard
                             mKeyguardDelegate.showKeyguard();
-                            mShowKeyguardOnLeftSwipe = false;
                         }
                     }
                     @Override
@@ -2129,8 +2138,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 updateWakeGestureListenerLp();
             }
 
-            boolean devForceNavbar = CMSettings.Secure.getIntForUser(resolver,
-                    CMSettings.Secure.DEV_FORCE_SHOW_NAVBAR, 0, UserHandle.USER_CURRENT) == 1;
+            boolean devForceNavbar = CMSettings.Global.getIntForUser(resolver,
+                    CMSettings.Global.DEV_FORCE_SHOW_NAVBAR, 0, UserHandle.USER_CURRENT) == 1;
             if (devForceNavbar != mDevForceNavbar) {
                 mDevForceNavbar = devForceNavbar;
                 if (mCMHardware.isSupported(CMHardwareManager.FEATURE_KEY_DISABLE)) {
@@ -2306,8 +2315,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 outAppOp[0] = AppOpsManager.OP_SYSTEM_ALERT_WINDOW;
                 break;
             case TYPE_KEYGUARD_PANEL:
-                permission =
-                        org.cyanogenmod.platform.internal.Manifest.permission.THIRD_PARTY_KEYGUARD;
+                permission = THIRD_PARTY_KEYGUARD;
                 break;
             default:
                 permission = android.Manifest.permission.INTERNAL_SYSTEM_WINDOW;
@@ -2342,6 +2350,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                             return WindowManagerGlobal.ADD_OKAY;
                         }
                 }
+            } else if (permission == THIRD_PARTY_KEYGUARD) {
+                // check if caller has the old permission and if so allow adding window
+                if (mContext.checkCallingOrSelfPermission(
+                        DEPRECATED_THIRD_PARTY_KEYGUARD_PERMISSION)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    return WindowManagerGlobal.ADD_OKAY;
+                }
+                // fall through to the normal check below
             }
 
             if (mContext.checkCallingOrSelfPermission(permission)
@@ -2871,9 +2887,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         "PhoneWindowManager");
                 break;
             case TYPE_KEYGUARD_PANEL:
-                mContext.enforceCallingOrSelfPermission(
-                        org.cyanogenmod.platform.internal.Manifest.permission.THIRD_PARTY_KEYGUARD,
-                        "PhoneWindowManager");
+                // check deprecated perm first and if not granted enforce the new permission name
+                if (mContext.checkCallingOrSelfPermission(
+                        DEPRECATED_THIRD_PARTY_KEYGUARD_PERMISSION)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    mContext.enforceCallingOrSelfPermission(THIRD_PARTY_KEYGUARD,
+                            "PhoneWindowManager");
+                }
                 if (mKeyguardPanel != null) {
                     return WindowManagerGlobal.ADD_MULTIPLE_SINGLETON;
                 }
@@ -3137,6 +3157,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         // timeout.
         if (keyCode == KeyEvent.KEYCODE_HOME) {
 
+            if (mTopFullscreenOpaqueWindowState != null &&
+                    (mTopFullscreenOpaqueWindowState.getAttrs().privateFlags
+                            & WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_SYSTEM_KEYS) != 0
+                    && mScreenOnFully) {
+                return 0;
+            }
             // If we have released the home key, and didn't do anything else
             // while it was pressed, then it is time to go home!
             if (!down) {
@@ -3237,6 +3263,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 return 0;
             }
 
+            if (mTopFullscreenOpaqueWindowState != null &&
+                    (mTopFullscreenOpaqueWindowState.getAttrs().privateFlags
+                            & WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_SYSTEM_KEYS) != 0
+                    && mScreenOnFully) {
+                return 0;
+            }
+
             if (down) {
                 if (mPressOnMenuBehavior == KEY_ACTION_APP_SWITCH
                         || mLongPressOnMenuBehavior == KEY_ACTION_APP_SWITCH) {
@@ -3302,6 +3335,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             }
             return 0;
         } else if (keyCode == KeyEvent.KEYCODE_APP_SWITCH) {
+            if (mTopFullscreenOpaqueWindowState != null &&
+                    (mTopFullscreenOpaqueWindowState.getAttrs().privateFlags
+                            & WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_SYSTEM_KEYS) != 0
+                    && mScreenOnFully) {
+                return 0;
+            }
+
             if (!keyguardOn) {
                 if (down) {
                     if (mPressOnAppSwitchBehavior == KEY_ACTION_APP_SWITCH
@@ -5814,7 +5854,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_POWER: {
                 if (mTopFullscreenOpaqueWindowState != null &&
                         (mTopFullscreenOpaqueWindowState.getAttrs().privateFlags
-                        & WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_POWER_KEY) != 0
+                        & (WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_SYSTEM_KEYS |
+                            WindowManager.LayoutParams.PRIVATE_FLAG_PREVENT_POWER_KEY)) != 0
                         && mScreenOnFully) {
                     return result;
                 }
@@ -5926,7 +5967,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         if (isWakeKey) {
-            wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey, "android.policy:KEY", true);
+            wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey, "android.policy:KEY",
+                    event.getKeyCode() == KeyEvent.KEYCODE_WAKEUP /* check prox only on wake key*/);
         }
 
         return result;
